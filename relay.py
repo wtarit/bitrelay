@@ -12,8 +12,7 @@ from config import (
 )
 from protocol import (
     decode_packet, encode_packet, reencode_with_ttl,
-    decode_message_payload, encode_message_payload,
-    decode_fragment, create_fragments, generate_msg_id,
+    decode_fragment, create_fragments,
 )
 from identity import Identity
 
@@ -163,20 +162,28 @@ class RelayEngine:
             self.on_peer_update("*** %s joined the mesh" % announce["nickname"])
 
     def _handle_message(self, pkt, sender_hex):
-        msg = decode_message_payload(pkt["payload"])
-        if msg is None:
+        # Android sends raw UTF-8 text as the payload
+        try:
+            content = pkt["payload"].decode("utf-8")
+        except Exception:
             return
+
+        # Look up sender nickname from peer registry
+        peer = self._peers.get(sender_hex)
+        sender = peer["nickname"] if peer else sender_hex[:12]
 
         # Update last_seen for known peer
         if sender_hex in self._peers:
             self._peers[sender_hex]["last_seen"] = time.time()
 
+        is_relay = pkt["ttl"] < MESSAGE_TTL
+
         if self.on_message:
             self.on_message(
-                msg["sender"],
-                msg["content"],
-                msg["is_relay"],
-                msg["timestamp_ms"],
+                sender,
+                content,
+                is_relay,
+                pkt["timestamp_ms"],
             )
 
     def _handle_leave(self, sender_hex):
@@ -186,13 +193,8 @@ class RelayEngine:
 
     async def send_message(self, content):
         """Send a broadcast chat message."""
-        msg_id = generate_msg_id()
-        payload = encode_message_payload(
-            msg_id=msg_id,
-            sender_name=self.identity.nickname,
-            content=content,
-            sender_peer_id=self.identity.peer_id_hex,
-        )
+        # Android uses raw UTF-8 text as payload
+        payload = content.encode("utf-8")
         raw = encode_packet(
             msg_type=MSG_MESSAGE,
             ttl=MESSAGE_TTL,
