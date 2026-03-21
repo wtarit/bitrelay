@@ -1,12 +1,40 @@
 import uasyncio as asyncio
 import gc
+import time
+import network
+import ntptime
+from config import WIFI_SSID, WIFI_PASSWORD
 from identity import Identity
 from ble_mesh import BLEMesh
 from relay import RelayEngine
 from terminal import Terminal
 
 
+def sync_time():
+    """Connect to WiFi briefly to sync time via NTP, then disconnect."""
+    wlan = network.WLAN(network.STA_IF)
+    wlan.active(True)
+    wlan.connect(WIFI_SSID, WIFI_PASSWORD)
+    for _ in range(20):
+        if wlan.isconnected():
+            break
+        time.sleep_ms(500)
+    if wlan.isconnected():
+        try:
+            ntptime.settime()
+            print("[ntp] Time synced")
+        except Exception as e:
+            print("[ntp] Sync failed: %s" % e)
+    else:
+        print("[ntp] WiFi connect failed")
+    wlan.active(False)
+
+
 async def main():
+    # 0. Sync time via NTP
+    sync_time()
+    gc.collect()
+
     # 1. Load or create identity
     identity = Identity()
     identity.load_or_create()
@@ -16,6 +44,13 @@ async def main():
 
     # 3. Create relay engine
     relay = RelayEngine(ble, identity)
+
+    # Send announce when a new BLE connection is established
+    async def _on_connect():
+        await asyncio.sleep_ms(500)  # brief delay for connection to stabilize
+        await relay.send_announce()
+
+    ble.on_connect = _on_connect
 
     # 4. Create terminal
     def get_info():

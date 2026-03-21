@@ -28,6 +28,7 @@ def _has_bitchat_service(result):
 class BLEMesh:
     def __init__(self):
         self.on_receive = None  # callback(data: bytes, ble_addr: str)
+        self.on_connect = None  # callback() - called when new connection established
         self._server_conns = {}  # ble_addr -> (connection, last_seen)
         self._client_conns = {}  # ble_addr -> (connection, characteristic, last_seen)
         self._known_addrs = set()  # addresses we've seen (avoid reconnecting)
@@ -68,6 +69,8 @@ class BLEMesh:
                 addr = _conn_addr(connection)
                 self._server_conns[addr] = (connection, asyncio.ticks())
                 asyncio.create_task(self._monitor_server_conn(addr, connection))
+                if self.on_connect:
+                    asyncio.create_task(self.on_connect())
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -165,6 +168,8 @@ class BLEMesh:
 
         self._connecting.discard(addr)
         self._client_conns[addr] = (connection, char, asyncio.ticks())
+        if self.on_connect:
+            asyncio.create_task(self.on_connect())
 
         # Read notifications until disconnected
         try:
@@ -215,15 +220,15 @@ class BLEMesh:
         """Send data to a server-side connection via notification."""
         try:
             self._char.notify(connection, data)
-        except Exception:
-            pass
+        except Exception as e:
+            print("[ble] notify error: %s" % e)
 
     async def _write_client(self, char, data):
         """Send data to a client-side connection via write."""
         try:
             await char.write(data, response=False)
-        except Exception:
-            pass
+        except Exception as e:
+            print("[ble] write error: %s" % e)
 
     async def _cleanup_task(self):
         """Periodically remove dead connections."""

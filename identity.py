@@ -2,6 +2,7 @@ import os
 import json
 import hashlib
 from config import TLV_NICKNAME, TLV_NOISE_PUBKEY, TLV_SIGNING_PUBKEY, MAX_NICKNAME_LENGTH
+import ed25519
 
 IDENTITY_FILE = "identity.json"
 
@@ -10,6 +11,7 @@ class Identity:
     def __init__(self):
         self.nickname = "esp32"
         self.noise_pubkey = b''
+        self.signing_privkey = b''
         self.signing_pubkey = b''
         self.peer_id = b''
 
@@ -23,11 +25,13 @@ class Identity:
                 data = json.load(f)
             self.nickname = data["nickname"]
             self.noise_pubkey = bytes.fromhex(data["noise_pubkey"])
+            self.signing_privkey = bytes.fromhex(data["signing_privkey"])
             self.signing_pubkey = bytes.fromhex(data["signing_pubkey"])
             self.peer_id = hashlib.sha256(self.noise_pubkey).digest()[:8]
         except (OSError, KeyError, ValueError):
             self.noise_pubkey = os.urandom(32)
-            self.signing_pubkey = os.urandom(32)
+            self.signing_privkey = os.urandom(32)
+            self.signing_pubkey = ed25519.publickey(self.signing_privkey)
             self.peer_id = hashlib.sha256(self.noise_pubkey).digest()[:8]
             self._save()
 
@@ -37,10 +41,15 @@ class Identity:
             self.nickname = name
             self._save()
 
+    def sign(self, data):
+        """Sign data with Ed25519 private key. Returns 64-byte signature."""
+        return ed25519.sign(data, self.signing_privkey, self.signing_pubkey)
+
     def _save(self):
         data = {
             "nickname": self.nickname,
             "noise_pubkey": ''.join('%02x' % b for b in self.noise_pubkey),
+            "signing_privkey": ''.join('%02x' % b for b in self.signing_privkey),
             "signing_pubkey": ''.join('%02x' % b for b in self.signing_pubkey),
         }
         with open(IDENTITY_FILE, "w") as f:

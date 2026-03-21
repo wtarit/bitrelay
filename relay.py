@@ -201,6 +201,7 @@ class RelayEngine:
             sender_id=self.identity.peer_id,
             payload=payload,
             recipient_id=BROADCAST_RECIPIENT,
+            sign_fn=self.identity.sign,
         )
 
         packets = create_fragments(
@@ -218,8 +219,11 @@ class RelayEngine:
             ttl=MESSAGE_TTL,
             sender_id=self.identity.peer_id,
             payload=payload,
+            sign_fn=self.identity.sign,
         )
         packets = create_fragments(raw, self.identity.peer_id, MESSAGE_TTL)
+        conns = self.ble.connection_count
+        print("[announce] sending %d pkt(s) to %d conn(s), size=%d" % (len(packets), conns, len(raw)))
         for pkt in packets:
             await self.ble.broadcast(pkt)
 

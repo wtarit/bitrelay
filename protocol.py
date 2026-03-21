@@ -9,6 +9,7 @@ from config import (
     MFLAG_HAS_MENTIONS, MFLAG_HAS_CHANNEL, MFLAG_IS_ENCRYPTED,
     PADDING_BLOCK_SIZES, BROADCAST_RECIPIENT, MESSAGE_TTL,
     MSG_FRAGMENT, FRAGMENT_THRESHOLD, MAX_FRAGMENT_SIZE, FRAGMENT_HEADER_SIZE,
+    EPOCH_OFFSET,
 )
 
 
@@ -47,16 +48,19 @@ def unpad(data):
 
 # --- Packet encode/decode (matching BinaryProtocol.kt v1) ---
 
-def encode_packet(msg_type, ttl, sender_id, payload, recipient_id=None, timestamp_ms=None):
+def _build_packet_bytes(msg_type, ttl, sender_id, payload, recipient_id=None,
+                        timestamp_ms=None, signature=None):
+    """Build raw packet bytes (before padding)."""
     if timestamp_ms is None:
-        timestamp_ms = int(time.time() * 1000)
+        timestamp_ms = int((time.time() + EPOCH_OFFSET) * 1000)
     version = 1
     flags = 0
     if recipient_id is not None:
         flags |= FLAG_HAS_RECIPIENT
+    if signature is not None:
+        flags |= FLAG_HAS_SIGNATURE
 
     payload_len = len(payload)
-    # Header: version(1) + type(1) + ttl(1) + timestamp(8) + flags(1) + payload_len(2) = 13
     header = struct.pack('>BBBQBH', version, msg_type, ttl, timestamp_ms, flags, payload_len)
 
     buf = bytearray(header)
@@ -75,7 +79,36 @@ def encode_packet(msg_type, ttl, sender_id, payload, recipient_id=None, timestam
     # Payload
     buf.extend(payload)
 
-    raw = bytes(buf)
+    # Signature
+    if signature is not None:
+        buf.extend(signature)
+
+    return bytes(buf)
+
+
+def encode_packet(msg_type, ttl, sender_id, payload, recipient_id=None,
+                  timestamp_ms=None, sign_fn=None):
+    if timestamp_ms is None:
+        timestamp_ms = int((time.time() + EPOCH_OFFSET) * 1000)
+
+    signature = None
+    if sign_fn is not None:
+        # Build packet with TTL=0 for signing (no signature yet)
+        data_for_signing = _build_packet_bytes(
+            msg_type, 0, sender_id, payload,
+            recipient_id=recipient_id, timestamp_ms=timestamp_ms,
+        )
+        # Pad the signing data
+        target = optimal_block_size(len(data_for_signing))
+        data_for_signing = pad(data_for_signing, target)
+        signature = sign_fn(data_for_signing)
+
+    # Build actual packet with real TTL and signature
+    raw = _build_packet_bytes(
+        msg_type, ttl, sender_id, payload,
+        recipient_id=recipient_id, timestamp_ms=timestamp_ms,
+        signature=signature,
+    )
     # Apply PKCS#7 padding
     target = optimal_block_size(len(raw))
     return pad(raw, target)
@@ -219,7 +252,7 @@ def encode_message_payload(msg_id, sender_name, content, sender_peer_id=None,
     buf.append(flags)
 
     # Timestamp (8 bytes BE, milliseconds)
-    buf.extend(struct.pack('>Q', int(time.time() * 1000)))
+    buf.extend(struct.pack('>Q', int((time.time() + EPOCH_OFFSET) * 1000)))
 
     # ID
     id_bytes = msg_id.encode('utf-8')[:255]
