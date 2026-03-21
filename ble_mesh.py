@@ -9,6 +9,20 @@ from config import (
 
 _SERVICE_UUID = bluetooth.UUID(SERVICE_UUID)
 _CHAR_UUID = bluetooth.UUID(CHARACTERISTIC_UUID)
+_SERVICE_UUID_BYTES = bytes(_SERVICE_UUID)
+
+
+def _has_bitchat_service(result):
+    """Check if scan result advertises bitchat service UUID.
+
+    Uses bytes comparison because MicroPython's bluetooth.UUID
+    doesn't implement __hash__, so 'UUID in set' fails even when
+    UUID == UUID returns True.
+    """
+    for svc in result.services():
+        if bytes(svc) == _SERVICE_UUID_BYTES:
+            return True
+    return False
 
 
 class BLEMesh:
@@ -17,10 +31,12 @@ class BLEMesh:
         self._server_conns = {}  # ble_addr -> (connection, last_seen)
         self._client_conns = {}  # ble_addr -> (connection, characteristic, last_seen)
         self._known_addrs = set()  # addresses we've seen (avoid reconnecting)
+        self._connecting = set()   # addresses currently being connected to
         self._service = aioble.Service(_SERVICE_UUID)
-        self._char = aioble.Characteristic(
+        self._char = aioble.BufferedCharacteristic(
             self._service, _CHAR_UUID,
-            read=True, write=True, notify=True, capture=True,
+            read=True, write=True, notify=True,
+            max_len=512,
         )
         aioble.register_services(self._service)
 
@@ -69,7 +85,15 @@ class BLEMesh:
         """Read writes from connected clients via the characteristic."""
         while True:
             try:
-                connection, data = await self._char.written()
+                result = await self._char.written()
+                # BufferedCharacteristic.written() returns connection only;
+                # data is read via char.read(). Regular Characteristic with
+                # capture returns (connection, data).
+                if isinstance(result, tuple):
+                    connection, data = result
+                else:
+                    connection = result
+                    data = self._char.read()
                 if data and self.on_receive:
                     addr = _conn_addr(connection)
                     try:
@@ -92,13 +116,15 @@ class BLEMesh:
                     window_us=30000,
                 ) as scanner:
                     async for result in scanner:
-                        if _SERVICE_UUID not in result.services():
+                        if not _has_bitchat_service(result):
                             continue
                         addr = _device_addr(result.device)
-                        if addr in self._all_addrs():
+                        # Skip if already connected (server or client side)
+                        if addr in self._all_addrs() or addr in self._connecting:
                             continue
                         if self.connection_count >= MAX_CONNECTIONS:
                             continue
+                        self._connecting.add(addr)
                         asyncio.create_task(self._connect_to_peer(result.device, addr))
             except asyncio.CancelledError:
                 raise
@@ -111,6 +137,7 @@ class BLEMesh:
         try:
             connection = await device.connect(timeout_ms=10000)
         except Exception:
+            self._connecting.discard(addr)
             return
 
         try:
@@ -129,12 +156,14 @@ class BLEMesh:
                 return
             await char.subscribe(notify=True)
         except Exception:
+            self._connecting.discard(addr)
             try:
                 connection.disconnect()
             except Exception:
                 pass
             return
 
+        self._connecting.discard(addr)
         self._client_conns[addr] = (connection, char, asyncio.ticks())
 
         # Read notifications until disconnected
