@@ -226,15 +226,18 @@ def _decode_core(raw):
 
 
 def reencode_with_ttl(packet_dict, new_ttl):
-    """Re-encode a decoded packet with a new TTL value."""
-    return encode_packet(
+    """Re-encode a decoded packet with a new TTL, preserving the original signature."""
+    raw = _build_packet_bytes(
         msg_type=packet_dict["type"],
         ttl=new_ttl,
         sender_id=packet_dict["sender_id"],
         payload=packet_dict["payload"],
         recipient_id=packet_dict["recipient_id"],
         timestamp_ms=packet_dict["timestamp_ms"],
+        signature=packet_dict.get("signature"),
     )
+    target = optimal_block_size(len(raw))
+    return pad(raw, target)
 
 
 # --- Message payload encode/decode (matching BitchatMessage.kt) ---
