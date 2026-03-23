@@ -1,0 +1,279 @@
+# This code is originally from https://github.com/devbis/st7789py_mpy
+# It's under the MIT license as well.
+#
+# Rewritten by Salvatore Sanfilippo.
+#
+# Copyright (C) 2024 Salvatore Sanfilippo <antirez@gmail.com>
+# All Rights Reserved
+# All the changes released under the MIT license as the original code.
+
+import time
+from micropython import const
+import ustruct as struct
+import framebuf
+
+# Commands. We use a small subset of what is
+# available and assume no MISO pin to read
+# from the display.
+ST77XX_NOP = bytes([0x00])
+ST77XX_SWRESET = bytes([0x01])
+ST77XX_SLPIN = bytes([0x10])
+ST77XX_SLPOUT = bytes([0x11])
+ST77XX_NORON = bytes([0x13])
+ST77XX_INVOFF = bytes([0x20])
+ST77XX_INVON = bytes([0x21])
+ST77XX_DISPON = bytes([0x29])
+ST77XX_CASET = bytes([0x2A])
+ST77XX_RASET = bytes([0x2B])
+ST77XX_RAMWR = bytes([0x2C])
+ST77XX_COLMOD = bytes([0x3A])
+ST7789_MADCTL = bytes([0x36])
+
+# MADCTL command flags
+ST7789_MADCTL_MY = const(0x80)
+ST7789_MADCTL_MX = const(0x40)
+ST7789_MADCTL_MV = const(0x20)
+ST7789_MADCTL_ML = const(0x10)
+ST7789_MADCTL_BGR = const(0x08)
+ST7789_MADCTL_MH = const(0x04)
+ST7789_MADCTL_RGB = const(0x00)
+
+# COLMOD command flags
+ColorMode_65K = const(0x50)
+ColorMode_262K = const(0x60)
+ColorMode_12bit = const(0x03)
+ColorMode_16bit = const(0x05)
+ColorMode_18bit = const(0x06)
+ColorMode_16M = const(0x07)
+
+# Struct pack formats for pixel/pos encoding
+_ENCODE_PIXEL = ">H"
+_ENCODE_POS = ">HH"
+
+class ST7789_base:
+    def __init__(self, spi, width, height, reset, dc, cs=None):
+        self.width = width
+        self.height = height
+        self.spi = spi
+        self.reset = reset
+        self.dc = dc
+        self.cs = cs
+
+        # Always allocate a tiny 8x8 framebuffer in RGB565 for fast
+        # single chars plotting.
+        self.charfb_data = bytearray(8*8*2)
+        self.charfb = framebuf.FrameBuffer(self.charfb_data,8,8,framebuf.RGB565)
+
+    def color(self, r=0, g=0, b=0):
+        c = (r & 0xf8) << 8 | (g & 0xfc) << 3 | b >> 3
+        return struct.pack(_ENCODE_PIXEL, c)
+
+    def write(self, command=None, data=None):
+        """SPI write to the device: commands and data"""
+        if command is not None:
+            self.dc.off()
+            self.spi.write(command)
+        if data is not None:
+            self.dc.on()
+            if len(data): self.spi.write(data)
+
+    def hard_reset(self):
+        if self.reset:
+            self.reset.on()
+            time.sleep_ms(50)
+            self.reset.off()
+            time.sleep_ms(50)
+            self.reset.on()
+            time.sleep_ms(150)
+
+    def soft_reset(self):
+        self.write(ST77XX_SWRESET)
+        time.sleep_ms(150)
+
+    def sleep_mode(self, value):
+        if value:
+            self.write(ST77XX_SLPIN)
+        else:
+            self.write(ST77XX_SLPOUT)
+
+    def inversion_mode(self, value):
+        if value:
+            self.write(ST77XX_INVON)
+        else:
+            self.write(ST77XX_INVOFF)
+
+    def _set_color_mode(self, mode):
+        self.write(ST77XX_COLMOD, bytes([mode & 0x77]))
+
+    def init(self, landscape=False, mirror_x=False, mirror_y=False, is_bgr=False, xstart=None, ystart=None, inversion=False):
+
+        self.inversion = inversion
+        self.mirror_x = mirror_x
+        self.mirror_y = mirror_y
+
+        if xstart != None and ystart != None:
+            self.xstart = xstart
+            self.ystart = ystart
+        elif (self.width, self.height) == (128, 160):
+            self.xstart = 0
+            self.ystart = 0
+        elif (self.width, self.height) == (240, 240):
+            self.xstart = 0
+            self.ystart = 0
+            if self.mirror_y: self.ystart = 40
+        elif (self.width, self.height) == (135, 240):
+            self.xstart = 52
+            self.ystart = 40
+        else:
+            self.xstart = 0
+            self.ystart = 0
+
+        if self.cs:
+            self.cs.off()
+        self.hard_reset()
+        self.soft_reset()
+        self.sleep_mode(False)
+
+        color_mode = ColorMode_65K | ColorMode_16bit
+        self._set_color_mode(color_mode)
+        time.sleep_ms(50)
+        self._set_mem_access_mode(landscape, mirror_x, mirror_y, is_bgr)
+        self.inversion_mode(self.inversion)
+        time.sleep_ms(10)
+        self.write(ST77XX_NORON)
+        time.sleep_ms(10)
+        self.fill(self.color(0,0,0))
+        self.write(ST77XX_DISPON)
+        time.sleep_ms(500)
+
+    def _set_mem_access_mode(self, landscape, mirror_x, mirror_y, is_bgr):
+        value = 0
+        if landscape: value |= ST7789_MADCTL_MV
+        if mirror_x: value |= ST7789_MADCTL_MX
+        if mirror_y: value |= ST7789_MADCTL_MY
+        if is_bgr: value |= ST7789_MADCTL_BGR
+        self.write(ST7789_MADCTL, bytes([value]))
+
+    def _encode_pos(self, x, y):
+        return struct.pack(_ENCODE_POS, x, y)
+
+    def _set_columns(self, start, end):
+        self.write(ST77XX_CASET, self._encode_pos(start+self.xstart, end+self.xstart))
+
+    def _set_rows(self, start, end):
+        self.write(ST77XX_RASET, self._encode_pos(start+self.ystart, end+self.ystart))
+
+    def set_window(self, x0, y0, x1, y1):
+        self._set_columns(x0, x1)
+        self._set_rows(y0, y1)
+        self.write(ST77XX_RAMWR)
+
+    def pixel(self, x, y, color):
+        if x < 0 or x >= self.width or y < 0 or y >= self.height: return
+        self.dc.off()
+        self.spi.write(ST77XX_CASET)
+        self.dc.on()
+        self.spi.write(self._encode_pos(x+self.xstart, x+self.xstart))
+
+        self.dc.off()
+        self.spi.write(ST77XX_RASET)
+        self.dc.on()
+        self.spi.write(self._encode_pos(y+self.ystart*2, y+self.ystart*2))
+
+        self.dc.off()
+        self.spi.write(ST77XX_RAMWR)
+        self.dc.on()
+        self.spi.write(color)
+
+    def fill(self, color):
+        self.set_window(0, 0, self.width-1, self.height-1)
+        buf = color*self.width
+        for i in range(self.height): self.write(None, buf)
+
+    def rect(self, x, y, w, h, color, fill=False):
+        if fill:
+            self.set_window(x, y, x+w-1, y+h-1)
+            if w*h > 256:
+                buf = color*w
+                for i in range(h): self.write(None, buf)
+            else:
+                buf = color*(w*h)
+                self.write(None, buf)
+        else:
+            self.hline(x, x+w-1, y, color)
+            self.hline(x, x+w-1, y+h-1, color)
+            self.vline(y, y+h-1, x, color)
+            self.vline(y, y+h-1, x+w-1, color)
+
+    def hline(self, x0, x1, y, color):
+        if y < 0 or y >= self.height: return
+        x0, x1 = max(min(x0, x1), 0), min(max(x0, x1), self.width-1)
+        self.set_window(x0, y, x1, y)
+        self.write(None, color*(x1-x0+1))
+
+    def vline(self, y0, y1, x, color):
+        y0, y1 = max(min(y0, y1), 0), min(max(y0, y1), self.height-1)
+        self.set_window(x, y0, x, y1)
+        self.write(None, color*(y1-y0+1))
+
+    def char(self, x, y, char, fgcolor, bgcolor):
+        if x >= self.width or y >= self.height:
+            return
+
+        self.charfb.fill(bgcolor[1]<<8|bgcolor[0])
+        self.charfb.text(char, 0, 0, fgcolor[1]<<8|fgcolor[0])
+
+        if x+7 >= self.width:
+            width = self.width-x
+            self.set_window(x, y, x+width-1, y+7)
+            copy = bytearray(width*8*2)
+            for dy in range(8):
+                src_idx = (dy*8)*2
+                dst_idx = (dy*width)*2
+                copy[dst_idx:dst_idx+width*2] = self.charfb_data[src_idx:src_idx+width*2]
+            self.write(None, copy)
+        else:
+            self.set_window(x, y, x+7, y+7)
+            self.write(None, self.charfb_data)
+
+    def text(self, x, y, txt, fgcolor, bgcolor):
+        for i in range(len(txt)):
+            self.char(x+i*8, y, txt[i], fgcolor, bgcolor)
+
+    def enable_framebuffer(self, mono=False):
+        if mono == False:
+            self.fbformat = framebuf.RGB565
+            self.rawbuffer = bytearray(self.width*self.height*2)
+            self.show = self.show_rgb
+        else:
+            self.fbformat = framebuf.MONO_HMSB
+            self.rawbuffer = bytearray((self.width*self.height+7)//8)
+            self.show = self.show_mono
+
+        self.fb = framebuf.FrameBuffer(self.rawbuffer,
+            self.width, self.height, self.fbformat)
+
+    def fb_color(self, r, g, b):
+        c = self.color(r, g, b)
+        return c[1]<<8 | c[0]
+
+    def show_rgb(self):
+        self.set_window(0, 0, self.width-1, self.height-1)
+        self.write(None, self.rawbuffer)
+
+    @micropython.viper
+    def fast_mono_to_rgb(self, fb8: ptr8, width: int, height: int):
+        row = bytearray(int(self.width)*2)
+        dst = ptr16(row)
+        bit = int(0)
+        for y in range(height):
+            for x in range(width):
+                byte = bit//8
+                color = 0xffff * ((fb8[byte] >> (bit&7)) & 1)
+                dst[x] = color
+                bit += 1
+            self.write(None, row)
+
+    def show_mono(self):
+        self.set_window(0, 0, self.width-1, self.height-1)
+        self.fast_mono_to_rgb(self.rawbuffer, self.width, self.height)

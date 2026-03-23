@@ -47,6 +47,7 @@ class RelayEngine:
         self._peers = {}           # peer_id_hex -> {nickname, last_seen, ble_addr, noise_pubkey}
         self._fragments = {}       # frag_id_hex -> {parts: {index: bytes}, total, orig_type, ts}
         self._packet_queue = []    # async queue for processing
+        self.relay_count = 0       # total messages relayed
 
         # Wire up BLE receive
         self.ble.on_receive = self._on_raw_receive
@@ -97,6 +98,7 @@ class RelayEngine:
             new_ttl = pkt["ttl"] - 1
             relayed = reencode_with_ttl(pkt, new_ttl)
             await self.ble.broadcast(relayed, exclude_addr=source_addr)
+            self.relay_count += 1
 
     async def _handle_fragment(self, pkt, source_addr, sender_hex):
         frag = decode_fragment(pkt["payload"])

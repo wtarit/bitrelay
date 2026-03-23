@@ -13,7 +13,7 @@ bitrelay-esp32 is a MicroPython BLE mesh chat node for ESP32, protocol-compatibl
 mpremote mip install aioble
 
 # Copy all files to ESP32
-mpremote connect /dev/ttyUSB0 cp config.py identity.py protocol.py ble_mesh.py relay.py terminal.py main.py ed25519.py sha512.py :
+mpremote connect /dev/ttyUSB0 cp config.py identity.py protocol.py ble_mesh.py relay.py terminal.py main.py ed25519.py sha512.py display.py st7789_base.py st7789_ext.py :
 
 # Run
 mpremote connect /dev/ttyUSB0 run main.py

@@ -8,6 +8,7 @@ from identity import Identity
 from ble_mesh import BLEMesh
 from relay import RelayEngine
 from terminal import Terminal
+from display import Display
 
 
 def sync_time():
@@ -31,7 +32,11 @@ def sync_time():
 
 
 async def main():
-    # 0. Sync time via NTP
+    # 0. Init display and show boot splash
+    display = Display()
+    display.show_boot_splash()
+
+    # 1. Sync time via NTP (splash visible during this)
     sync_time()
     gc.collect()
 
@@ -74,6 +79,21 @@ async def main():
     relay.on_message = terminal.display_message
     relay.on_peer_update = terminal.display_system
 
+    # Build status callback for display
+    def get_status():
+        return {
+            "peer_id": identity.peer_id_hex,
+            "nickname": identity.nickname,
+            "connections": ble.connection_count,
+            "peers": len(relay.get_peers()),
+            "relayed": relay.relay_count,
+        }
+
+    # Show initial status screen
+    s = get_status()
+    display.show_status(s["connections"], s["relayed"],
+                        s["nickname"], s["peer_id"])
+
     # 5. Run all tasks
     gc.collect()
     await asyncio.gather(
@@ -82,6 +102,7 @@ async def main():
         relay.periodic_announce(),
         relay.periodic_cleanup(),
         terminal.run(),
+        display.refresh_loop(get_status),
     )
 
 
