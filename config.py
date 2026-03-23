@@ -77,8 +77,8 @@ DEDUP_CACHE_SIZE = 500
 MAX_NICKNAME_LENGTH = 15
 
 # WiFi (for NTP time sync)
-WIFI_SSID = "TwPx9"
-WIFI_PASSWORD = "taritwifi"
+WIFI_SSID = "your_ssid"
+WIFI_PASSWORD = "your_password"
 
 # MicroPython epoch offset (2000-01-01 vs Unix 1970-01-01)
 EPOCH_OFFSET = 946684800
