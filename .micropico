@@ -1,3 +1,11 @@
 {
-    "info": "This file is just used to identify a project folder."
+  "info": "This file is just used to identify a project folder.",
+  "micropico.pyIgnore": [
+    ".claude/",
+    "__pycache__/",
+    ".vscode/",
+    "CLAUDE.md",
+    "AGENTS.md",
+    ".gitignore"
+  ]
 }
