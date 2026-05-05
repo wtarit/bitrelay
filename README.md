@@ -37,12 +37,12 @@ An RTC module (e.g. DS3231) could eliminate this requirement by keeping time via
 # Install aioble (one-time)
 mpremote mip install aioble
 
-# Configure WiFi for NTP in config.py
-# WIFI_SSID = "your_ssid"
-# WIFI_PASSWORD = "your_password"
+# Configure WiFi credentials for NTP
+cp config_local.py.example config_local.py
+# Edit config_local.py and set WIFI_SSID and WIFI_PASSWORD
 
 # Deploy to ESP32
-mpremote connect /dev/ttyUSB0 cp config.py identity.py protocol.py ble_mesh.py relay.py terminal.py main.py ed25519.py sha512.py :
+mpremote connect /dev/ttyUSB0 cp config.py config_local.py identity.py protocol.py ble_mesh.py relay.py terminal.py main.py ed25519.py sha512.py :
 
 # Run
 mpremote connect /dev/ttyUSB0 run main.py

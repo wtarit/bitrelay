@@ -1,0 +1,5 @@
+# Copy this file to config_local.py and fill in your credentials.
+# config_local.py is gitignored and never committed.
+
+WIFI_SSID = "your_ssid"
+WIFI_PASSWORD = "your_password"
