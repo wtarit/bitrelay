@@ -127,8 +127,8 @@ def _format_time(timestamp_ms=None):
         # Use local time for display
         try:
             t = time.localtime(timestamp_ms // 1000)
-            return "%02d:%02d" % (t[3], t[4])
+            return "%02d:%02d UTC" % (t[3], t[4])
         except Exception:
             pass
     t = time.localtime()
-    return "%02d:%02d" % (t[3], t[4])
+    return "%02d:%02d UTC" % (t[3], t[4])
